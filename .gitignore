@@ -1,0 +1,29 @@
+.DS_Store
+
+# Java / Spring Boot
+backend/target/
+backend/.mvn/wrapper/maven-wrapper.jar
+*.class
+
+# Python
+agent_service/.venv/
+agent_service/__pycache__/
+agent_service/.pytest_cache/
+agent_service/.ruff_cache/
+*.pyc
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env files
+.env
+.env.local
+backend/.env
+agent_service/.env
+frontend/.env
+
+# IDE
+.idea/
+.vscode/
+

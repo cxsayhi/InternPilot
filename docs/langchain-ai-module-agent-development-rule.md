@@ -575,7 +575,7 @@ Build the module in this order:
 4. LLM extraction with structured output.
 5. LangGraph MVP workflow.
 6. Rewrite generation with no-fabrication validation.
-7. 3-day learning plan generation.
+7. 7-day learning plan generation.
 8. FastAPI endpoint.
 
 MVP explicitly excludes:

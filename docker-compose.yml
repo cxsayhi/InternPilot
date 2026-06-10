@@ -1,0 +1,55 @@
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: internpilot-mysql
+    environment:
+      MYSQL_DATABASE: internpilot
+      MYSQL_USER: internpilot
+      MYSQL_PASSWORD: internpilot
+      MYSQL_ROOT_PASSWORD: internpilot_root
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  agent_service:
+    build:
+      context: ./agent_service
+    container_name: internpilot-agent-service
+    ports:
+      - "8000:8000"
+    environment:
+      APP_ENV: docker
+
+  backend:
+    build:
+      context: ./backend
+    container_name: internpilot-backend
+    ports:
+      - "8080:8080"
+    environment:
+      AGENT_SERVICE_BASE_URL: http://agent_service:8000
+    depends_on:
+      agent_service:
+        condition: service_started
+      mysql:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+    container_name: internpilot-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      backend:
+        condition: service_started
+
+volumes:
+  mysql_data:
+

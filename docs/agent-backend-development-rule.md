@@ -29,7 +29,7 @@ For the MVP, the backend only needs to support this flow:
 6. Agent Service returns structured analysis.
 7. Spring Boot saves the analysis result.
 8. Spring Boot saves resume rewrite suggestions as `PENDING_REVIEW`.
-9. Frontend displays match result, missing skills, rewrite suggestions, and a short action plan.
+9. Frontend displays match result, missing skills, rewrite suggestions, and a 7-day action plan.
 10. User can later approve, edit, or reject each rewrite suggestion.
 
 Do not build PDF upload, vector search, dashboard statistics, history Q&A, interview generation, GitHub README analysis, or multi-agent orchestration in the MVP.
@@ -369,7 +369,7 @@ MVP includes only:
 - produce match score
 - show strong matches, weak matches, and missing skills
 - produce rewrite suggestions as `PENDING_REVIEW`
-- produce a 3-day action plan
+- produce a 7-day action plan
 - save analysis history
 - approve, edit-and-approve, or reject rewrite suggestions
 

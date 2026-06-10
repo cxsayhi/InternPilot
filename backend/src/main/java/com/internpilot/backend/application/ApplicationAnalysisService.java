@@ -1,0 +1,128 @@
+package com.internpilot.backend.application;
+
+import com.internpilot.backend.agent.AgentServiceClient;
+import com.internpilot.backend.domain.AgentApplicationAnalysisRequest;
+import com.internpilot.backend.domain.AgentApplicationAnalysisResponse;
+import com.internpilot.backend.domain.AgentRewriteSuggestion;
+import com.internpilot.backend.domain.AnalyzeApplicationRequest;
+import com.internpilot.backend.domain.ApplicationAnalysisRecord;
+import com.internpilot.backend.domain.ApplicationAnalysisResponse;
+import com.internpilot.backend.domain.RewriteSuggestionView;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.server.ResponseStatusException;
+
+@Service
+public class ApplicationAnalysisService {
+
+    private static final String STATUS_ANALYZED = "ANALYZED";
+    private static final String STATUS_FAILED = "FAILED";
+    private static final String SUGGESTION_PENDING_REVIEW = "PENDING_REVIEW";
+
+    private final AgentServiceClient agentServiceClient;
+    private final InMemoryApplicationAnalysisStore store;
+
+    public ApplicationAnalysisService(
+            AgentServiceClient agentServiceClient,
+            InMemoryApplicationAnalysisStore store
+    ) {
+        this.agentServiceClient = agentServiceClient;
+        this.store = store;
+    }
+
+    public ApplicationAnalysisResponse analyze(String userId, AnalyzeApplicationRequest request) {
+        String applicationId = prefixedId("app");
+        String analysisId = prefixedId("analysis");
+
+        AgentApplicationAnalysisRequest agentRequest = new AgentApplicationAnalysisRequest(
+                userId,
+                applicationId,
+                request.resumeText(),
+                request.jobText(),
+                request.company(),
+                request.role()
+        );
+
+        AgentApplicationAnalysisResponse agentResponse;
+        try {
+            agentResponse = agentServiceClient.analyzeApplication(agentRequest);
+        } catch (RestClientException ex) {
+            store.save(new ApplicationAnalysisRecord(
+                    applicationId,
+                    analysisId,
+                    userId,
+                    STATUS_FAILED,
+                    null,
+                    "AGENT_ANALYSIS_FAILED",
+                    Instant.now()
+            ));
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Application analysis failed. Please try again later.",
+                    ex
+            );
+        }
+
+        List<RewriteSuggestionView> suggestions = listOrEmpty(agentResponse.rewriteSuggestions())
+                .stream()
+                .map(this::toPendingSuggestion)
+                .toList();
+
+        ApplicationAnalysisResponse response = new ApplicationAnalysisResponse(
+                applicationId,
+                analysisId,
+                STATUS_ANALYZED,
+                agentResponse.matchScore(),
+                mapOrEmpty(agentResponse.scoreBreakdown()),
+                listOrEmpty(agentResponse.strongMatches()),
+                listOrEmpty(agentResponse.weakMatches()),
+                listOrEmpty(agentResponse.missingSkills()),
+                listOrEmpty(agentResponse.learningPlan()),
+                suggestions,
+                listOrEmpty(agentResponse.warnings())
+        );
+
+        store.save(new ApplicationAnalysisRecord(
+                applicationId,
+                analysisId,
+                userId,
+                STATUS_ANALYZED,
+                response,
+                null,
+                Instant.now()
+        ));
+
+        return response;
+    }
+
+    private RewriteSuggestionView toPendingSuggestion(AgentRewriteSuggestion suggestion) {
+        return new RewriteSuggestionView(
+                prefixedId("sug"),
+                SUGGESTION_PENDING_REVIEW,
+                suggestion.originalBullet(),
+                suggestion.suggestedBullet(),
+                listOrEmpty(suggestion.targetedSkills()),
+                listOrEmpty(suggestion.evidenceSources()),
+                listOrEmpty(suggestion.unsupportedClaims()),
+                suggestion.confidence()
+        );
+    }
+
+    private static String prefixedId(String prefix) {
+        return prefix + "_" + UUID.randomUUID();
+    }
+
+    private static <T> List<T> listOrEmpty(List<T> value) {
+        return value == null ? List.of() : value;
+    }
+
+    private static Map<String, Object> mapOrEmpty(Map<String, Object> value) {
+        return value == null ? Map.of() : value;
+    }
+}
+

@@ -7,7 +7,6 @@ from langgraph.graph import END, START, StateGraph
 from app.core.config import settings
 from app.graphs.state import ApplicationAgentState
 from app.schemas.job import JobProfile
-from app.schemas.match import MatchResult
 from app.schemas.plan import LearningPlanItem
 from app.schemas.project import ProjectEvidence
 from app.schemas.resume import ResumeProfile
@@ -48,32 +47,7 @@ def run_application_graph(request: AnalyzeApplicationRequest) -> AnalyzeApplicat
     }
 
     final_state = _compiled_graph.invoke(initial_state)
-    match_result = validate_structured_output(MatchResult, final_state["match_result"])
-
-    return validate_structured_output(
-        AnalyzeApplicationResponse,
-        {
-            "runId": final_state["run_id"],
-            "matchScore": match_result.score,
-            "scoreBreakdown": match_result.breakdown,
-            "strongMatches": match_result.strongMatches,
-            "weakMatches": match_result.weakMatches,
-            "missingSkills": match_result.missingSkills,
-            "rewriteSuggestions": final_state.get("rewrite_suggestions", []),
-            "learningPlan": final_state.get("learning_plan", []),
-            "warnings": final_state.get("warnings", []),
-            "metadata": AgentMetadata(
-                graphVersion=settings.graph_version,
-                model=settings.model_name,
-                promptVersions={
-                    "jobExtraction": _job_extraction_prompt_version(),
-                    "resumeExtraction": _resume_extraction_prompt_version(),
-                    "rewrite": "deterministic_mvp.v1",
-                    "learningPlan": "deterministic_mvp.v1",
-                },
-            ),
-        },
-    )
+    return validate_structured_output(AnalyzeApplicationResponse, final_state["response"])
 
 
 def validate_input(state: ApplicationAgentState) -> ApplicationAgentState:
@@ -83,8 +57,8 @@ def validate_input(state: ApplicationAgentState) -> ApplicationAgentState:
     if not state.get("job_text", "").strip():
         errors.append("JOB_TEXT_EMPTY")
     if errors:
-        return {"errors": errors, "next_action": "failed"}
-    return {"next_action": "extract_job"}
+        return {"errors": errors}
+    return {"errors": []}
 
 
 def extract_job_requirements(state: ApplicationAgentState) -> ApplicationAgentState:
@@ -99,8 +73,7 @@ def extract_job_requirements(state: ApplicationAgentState) -> ApplicationAgentSt
             }
         )
         return {
-            "job_profile": job_profile.model_dump(),
-            "next_action": "extract_resume",
+            "job_profile": job_profile,
         }
 
     required_skills, preferred_skills = _split_required_and_preferred_skills(job_text)
@@ -116,8 +89,7 @@ def extract_job_requirements(state: ApplicationAgentState) -> ApplicationAgentSt
         },
     )
     return {
-        "job_profile": job_profile.model_dump(),
-        "next_action": "extract_resume",
+        "job_profile": job_profile,
     }
 
 
@@ -127,8 +99,7 @@ def extract_resume_profile(state: ApplicationAgentState) -> ApplicationAgentStat
     if settings.resume_extraction_mode == "llm":
         resume_profile = extract_resume_profile_from_text(resume_text)
         return {
-            "resume_profile": resume_profile.model_dump(),
-            "next_action": "match",
+            "resume_profile": resume_profile,
         }
 
     skills = _find_skills(resume_text)
@@ -144,36 +115,30 @@ def extract_resume_profile(state: ApplicationAgentState) -> ApplicationAgentStat
         },
     )
     return {
-        "resume_profile": resume_profile.model_dump(),
-        "next_action": "match",
+        "resume_profile": resume_profile,
     }
 
 
 def compare_skills(state: ApplicationAgentState) -> ApplicationAgentState:
-    job_profile = validate_structured_output(JobProfile, state["job_profile"])
-    resume_profile = validate_structured_output(ResumeProfile, state["resume_profile"])
-    projects = [
-        validate_structured_output(ProjectEvidence, project)
-        for project in resume_profile.projects
-    ]
+    job_profile = state["job_profile"]
+    resume_profile = state["resume_profile"]
     match_result = calculate_skill_match(
         job_profile=job_profile,
         resume_profile=resume_profile,
-        projects=projects,
+        projects=resume_profile.projects,
     )
 
     return {
-        "match_result": match_result.model_dump(),
-        "next_action": "rewrite",
+        "match_result": match_result,
     }
 
 
 def generate_resume_rewrites(state: ApplicationAgentState) -> ApplicationAgentState:
-    resume_profile = validate_structured_output(ResumeProfile, state["resume_profile"])
+    resume_profile = state["resume_profile"]
     bullets = resume_profile.evidence_bullets
     matched_skills = [
-        item["skill"]
-        for item in state["match_result"].get("strongMatches", [])
+        item.skill
+        for item in state["match_result"].strongMatches
     ]
     original = bullets[0] if bullets else "Built a software project."
 
@@ -199,15 +164,14 @@ def generate_resume_rewrites(state: ApplicationAgentState) -> ApplicationAgentSt
     )
 
     return {
-        "rewrite_suggestions": [suggestion.model_dump()],
-        "next_action": "plan",
+        "rewrite_suggestions": [suggestion],
     }
 
 
 def generate_learning_plan(state: ApplicationAgentState) -> ApplicationAgentState:
     missing = [
-        item["skill"]
-        for item in state["match_result"].get("missingSkills", [])
+        item.skill
+        for item in state["match_result"].missingSkills
     ]
     focus_skills = missing or ["resume clarity", "project evidence", "interview explanation"]
     plan: list[dict] = []
@@ -228,16 +192,40 @@ def generate_learning_plan(state: ApplicationAgentState) -> ApplicationAgentStat
                 "deliverable": f"One visible improvement related to {skill}.",
             },
         )
-        plan.append(plan_item.model_dump())
+        plan.append(plan_item)
 
     return {
         "learning_plan": plan,
-        "next_action": "done",
     }
 
 
 def prepare_response(state: ApplicationAgentState) -> ApplicationAgentState:
-    return {"next_action": "done"}
+    match_result = state["match_result"]
+    response = validate_structured_output(
+        AnalyzeApplicationResponse,
+        {
+            "runId": state["run_id"],
+            "matchScore": match_result.score,
+            "scoreBreakdown": match_result.breakdown,
+            "strongMatches": match_result.strongMatches,
+            "weakMatches": match_result.weakMatches,
+            "missingSkills": match_result.missingSkills,
+            "rewriteSuggestions": state.get("rewrite_suggestions", []),
+            "learningPlan": state.get("learning_plan", []),
+            "warnings": state.get("warnings", []),
+            "metadata": AgentMetadata(
+                graphVersion=settings.graph_version,
+                model=settings.model_name,
+                promptVersions={
+                    "jobExtraction": _job_extraction_prompt_version(),
+                    "resumeExtraction": _resume_extraction_prompt_version(),
+                    "rewrite": "deterministic_mvp.v1",
+                    "learningPlan": "deterministic_mvp.v1",
+                },
+            ),
+        },
+    )
+    return {"response": response}
 
 
 def _build_graph():
@@ -312,8 +300,8 @@ def _extract_resume_bullets(text: str) -> list[str]:
     return [line for line in lines if len(line) >= 12]
 
 
-def _extract_project_evidence(bullets: list[str]) -> list[dict]:
-    projects: list[dict] = []
+def _extract_project_evidence(bullets: list[str]) -> list[ProjectEvidence]:
+    projects: list[ProjectEvidence] = []
     for index, bullet in enumerate(bullets, start=1):
         if is_skill_inventory_line(bullet):
             continue
@@ -329,7 +317,7 @@ def _extract_project_evidence(bullets: list[str]) -> list[dict]:
                 "source": "pasted_resume_text",
             },
         )
-        projects.append(project.model_dump())
+        projects.append(project)
     return projects
 
 

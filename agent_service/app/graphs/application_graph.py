@@ -6,34 +6,31 @@ from langgraph.graph import END, START, StateGraph
 
 from app.core.config import settings
 from app.graphs.state import ApplicationAgentState
-from app.schemas.analysis import (
+from app.schemas.job import JobProfile
+from app.schemas.match import MatchResult
+from app.schemas.plan import LearningPlanItem
+from app.schemas.project import ProjectEvidence
+from app.schemas.resume import ResumeProfile
+from app.schemas.rewrite import RewriteSuggestion
+from app.schemas.run import (
     AgentMetadata,
-    ApplicationAnalysisRequest,
-    ApplicationAnalysisResponse,
-    LearningPlanItem,
-    RewriteSuggestion,
+    AnalyzeApplicationRequest,
+    AnalyzeApplicationResponse,
 )
-
-TECH_SKILLS = [
-    "Java",
-    "Spring Boot",
-    "MySQL",
-    "Redis",
-    "Docker",
-    "REST API",
-    "Git",
-    "LLM",
-    "RAG",
-    "CI/CD",
-    "Testing",
-    "Vue",
-    "React",
-    "Python",
-    "FastAPI",
-]
+from app.services.job_extraction import (
+    JOB_EXTRACTION_PROMPT_VERSION,
+    extract_job_profile,
+)
+from app.services.skill_matching import (
+    calculate_skill_match,
+    find_known_skills,
+    is_skill_inventory_line,
+    is_preferred_skill_line,
+)
+from app.services.structured_output import validate_structured_output
 
 
-def run_application_graph(request: ApplicationAnalysisRequest) -> ApplicationAnalysisResponse:
+def run_application_graph(request: AnalyzeApplicationRequest) -> AnalyzeApplicationResponse:
     initial_state: ApplicationAgentState = {
         "run_id": f"run_{uuid4()}",
         "user_id": request.userId,
@@ -47,34 +44,31 @@ def run_application_graph(request: ApplicationAnalysisRequest) -> ApplicationAna
     }
 
     final_state = _compiled_graph.invoke(initial_state)
-    match_result = final_state["match_result"]
+    match_result = validate_structured_output(MatchResult, final_state["match_result"])
 
-    return ApplicationAnalysisResponse(
-        runId=final_state["run_id"],
-        matchScore=match_result["score"],
-        scoreBreakdown=match_result["breakdown"],
-        strongMatches=match_result["strongMatches"],
-        weakMatches=match_result["weakMatches"],
-        missingSkills=match_result["missingSkills"],
-        rewriteSuggestions=[
-            RewriteSuggestion(**suggestion)
-            for suggestion in final_state.get("rewrite_suggestions", [])
-        ],
-        learningPlan=[
-            LearningPlanItem(**item)
-            for item in final_state.get("learning_plan", [])
-        ],
-        warnings=final_state.get("warnings", []),
-        metadata=AgentMetadata(
-            graphVersion=settings.graph_version,
-            model=settings.model_name,
-            promptVersions={
-                "jobExtraction": "deterministic_mvp.v1",
-                "resumeExtraction": "deterministic_mvp.v1",
-                "rewrite": "deterministic_mvp.v1",
-                "learningPlan": "deterministic_mvp.v1",
-            },
-        ),
+    return validate_structured_output(
+        AnalyzeApplicationResponse,
+        {
+            "runId": final_state["run_id"],
+            "matchScore": match_result.score,
+            "scoreBreakdown": match_result.breakdown,
+            "strongMatches": match_result.strongMatches,
+            "weakMatches": match_result.weakMatches,
+            "missingSkills": match_result.missingSkills,
+            "rewriteSuggestions": final_state.get("rewrite_suggestions", []),
+            "learningPlan": final_state.get("learning_plan", []),
+            "warnings": final_state.get("warnings", []),
+            "metadata": AgentMetadata(
+                graphVersion=settings.graph_version,
+                model=settings.model_name,
+                promptVersions={
+                    "jobExtraction": _job_extraction_prompt_version(),
+                    "resumeExtraction": "deterministic_mvp.v1",
+                    "rewrite": "deterministic_mvp.v1",
+                    "learningPlan": "deterministic_mvp.v1",
+                },
+            ),
+        },
     )
 
 
@@ -91,14 +85,34 @@ def validate_input(state: ApplicationAgentState) -> ApplicationAgentState:
 
 def extract_job_requirements(state: ApplicationAgentState) -> ApplicationAgentState:
     job_text = state["job_text"]
-    required_skills = _find_skills(job_text)
-    return {
-        "job_profile": {
+
+    if settings.job_extraction_mode == "llm":
+        extracted_profile = extract_job_profile(job_text)
+        job_profile = extracted_profile.model_copy(
+            update={
+                "company": state.get("company") or extracted_profile.company,
+                "role_title": state.get("role") or extracted_profile.role_title,
+            }
+        )
+        return {
+            "job_profile": job_profile.model_dump(),
+            "next_action": "extract_resume",
+        }
+
+    required_skills, preferred_skills = _split_required_and_preferred_skills(job_text)
+    job_profile = validate_structured_output(
+        JobProfile,
+        {
             "company": state.get("company"),
-            "role": state.get("role"),
-            "requiredSkills": required_skills,
-            "keywords": required_skills,
+            "role_title": state.get("role"),
+            "required_skills": required_skills,
+            "preferred_skills": preferred_skills,
+            "responsibilities": _extract_responsibilities(job_text),
+            "keywords": [*required_skills, *preferred_skills],
         },
+    )
+    return {
+        "job_profile": job_profile.model_dump(),
         "next_action": "extract_resume",
     }
 
@@ -107,64 +121,36 @@ def extract_resume_profile(state: ApplicationAgentState) -> ApplicationAgentStat
     resume_text = state["resume_text"]
     skills = _find_skills(resume_text)
     bullets = _extract_resume_bullets(resume_text)
-    return {
-        "resume_profile": {
+    projects = _extract_project_evidence(bullets)
+    resume_profile = validate_structured_output(
+        ResumeProfile,
+        {
             "skills": skills,
             "bullets": bullets,
+            "projects": projects,
         },
+    )
+    return {
+        "resume_profile": resume_profile.model_dump(),
         "next_action": "match",
     }
 
 
 def compare_skills(state: ApplicationAgentState) -> ApplicationAgentState:
-    job_skills = set(state["job_profile"].get("requiredSkills", []))
-    resume_skills = set(state["resume_profile"].get("skills", []))
-    matched = sorted(job_skills & resume_skills)
-    missing = sorted(job_skills - resume_skills)
-
-    coverage = len(matched) / len(job_skills) if job_skills else 0
-    required_score = round(coverage * 40)
-    preferred_score = round(coverage * 15)
-    evidence_score = round(min(len(matched), 4) / 4 * 20) if matched else 0
-    responsibility_score = round(coverage * 15)
-    clarity_score = 8 if matched else 2
-    total = min(
-        100,
-        required_score
-        + preferred_score
-        + evidence_score
-        + responsibility_score
-        + clarity_score,
+    job_profile = validate_structured_output(JobProfile, state["job_profile"])
+    resume_profile = validate_structured_output(ResumeProfile, state["resume_profile"])
+    projects = [
+        validate_structured_output(ProjectEvidence, project)
+        for project in resume_profile.projects
+    ]
+    match_result = calculate_skill_match(
+        job_profile=job_profile,
+        resume_profile=resume_profile,
+        projects=projects,
     )
 
-    strong_matches = [
-        _skill_item(skill, "matched", f"Found '{skill}' in both resume and job description.")
-        for skill in matched
-    ]
-    missing_skills = [
-        _skill_item(skill, "missing", f"'{skill}' appears in the job description but not in the resume text.")
-        for skill in missing
-    ]
-
-    weak_matches = [
-        item for item in missing_skills
-        if item["skill"] in {"Docker", "RAG", "LLM", "CI/CD", "Testing"}
-    ]
-
     return {
-        "match_result": {
-            "score": total,
-            "breakdown": {
-                "requiredSkillCoverage": required_score,
-                "preferredSkillCoverage": preferred_score,
-                "resumeEvidenceStrength": evidence_score,
-                "responsibilityAlignment": responsibility_score,
-                "resumeKeywordClarity": clarity_score,
-            },
-            "strongMatches": strong_matches,
-            "weakMatches": weak_matches,
-            "missingSkills": missing_skills,
-        },
+        "match_result": match_result.model_dump(),
         "next_action": "rewrite",
     }
 
@@ -185,18 +171,21 @@ def generate_resume_rewrites(state: ApplicationAgentState) -> ApplicationAgentSt
         suggested = f"{original.rstrip('.')} with clearer scope, technical responsibility, and measurable outcome."
         needs_confirmation = True
 
+    suggestion = validate_structured_output(
+        RewriteSuggestion,
+        {
+            "originalBullet": original,
+            "suggestedBullet": suggested,
+            "targetedSkills": matched_skills[:4],
+            "evidenceSources": ["pasted_resume_text"],
+            "unsupportedClaims": [],
+            "confidence": 0.78 if matched_skills else 0.55,
+            "needsUserConfirmation": needs_confirmation,
+        },
+    )
+
     return {
-        "rewrite_suggestions": [
-            {
-                "originalBullet": original,
-                "suggestedBullet": suggested,
-                "targetedSkills": matched_skills[:4],
-                "evidenceSources": ["pasted_resume_text"],
-                "unsupportedClaims": [],
-                "confidence": 0.78 if matched_skills else 0.55,
-                "needsUserConfirmation": needs_confirmation,
-            }
-        ],
+        "rewrite_suggestions": [suggestion.model_dump()],
         "next_action": "plan",
     }
 
@@ -211,7 +200,8 @@ def generate_learning_plan(state: ApplicationAgentState) -> ApplicationAgentStat
 
     for day in range(1, 8):
         skill = focus_skills[(day - 1) % len(focus_skills)]
-        plan.append(
+        plan_item = validate_structured_output(
+            LearningPlanItem,
             {
                 "day": day,
                 "title": f"Improve {skill}",
@@ -222,8 +212,9 @@ def generate_learning_plan(state: ApplicationAgentState) -> ApplicationAgentStat
                 ],
                 "targetSkills": [skill],
                 "deliverable": f"One visible improvement related to {skill}.",
-            }
+            },
         )
+        plan.append(plan_item.model_dump())
 
     return {
         "learning_plan": plan,
@@ -258,12 +249,42 @@ def _build_graph():
 
 
 def _find_skills(text: str) -> list[str]:
-    normalized = text.lower()
-    found = []
-    for skill in TECH_SKILLS:
-        if skill.lower() in normalized:
-            found.append(skill)
-    return sorted(set(found))
+    return find_known_skills(text)
+
+
+def _job_extraction_prompt_version() -> str:
+    if settings.job_extraction_mode == "llm":
+        return JOB_EXTRACTION_PROMPT_VERSION
+    return "deterministic_mvp.v1"
+
+
+def _split_required_and_preferred_skills(text: str) -> tuple[list[str], list[str]]:
+    required: list[str] = []
+    preferred: list[str] = []
+
+    for line in _clean_lines(text):
+        line_skills = _find_skills(line)
+        if not line_skills:
+            continue
+        if is_preferred_skill_line(line):
+            preferred.extend(line_skills)
+        else:
+            required.extend(line_skills)
+
+    all_skills = _find_skills(text)
+    assigned = set(required) | set(preferred)
+    required.extend(skill for skill in all_skills if skill not in assigned)
+    preferred = [skill for skill in preferred if skill not in set(required)]
+
+    return sorted(set(required)), sorted(set(preferred))
+
+
+def _extract_responsibilities(text: str) -> list[str]:
+    return [
+        line
+        for line in _clean_lines(text)
+        if len(line) >= 12 and not line.lower().strip(":").endswith("requirements")
+    ]
 
 
 def _extract_resume_bullets(text: str) -> list[str]:
@@ -271,19 +292,33 @@ def _extract_resume_bullets(text: str) -> list[str]:
     return [line for line in lines if len(line) >= 12]
 
 
-def _skill_item(skill: str, status: str, evidence_text: str) -> dict:
-    return {
-        "skill": skill,
-        "status": status,
-        "evidence": [
+def _extract_project_evidence(bullets: list[str]) -> list[dict]:
+    projects: list[dict] = []
+    for index, bullet in enumerate(bullets, start=1):
+        if is_skill_inventory_line(bullet):
+            continue
+        tech_stack = _find_skills(bullet)
+        if not tech_stack:
+            continue
+        project = validate_structured_output(
+            ProjectEvidence,
             {
-                "source": "pasted_text",
-                "text": evidence_text,
-            }
-        ],
-        "confidence": 0.9 if status == "matched" else 0.72,
-    }
+                "name": f"Resume bullet {index}",
+                "techStack": tech_stack,
+                "evidenceText": bullet,
+                "source": "pasted_resume_text",
+            },
+        )
+        projects.append(project.model_dump())
+    return projects
+
+
+def _clean_lines(text: str) -> list[str]:
+    return [
+        line.strip(" -•\t")
+        for line in text.splitlines()
+        if line.strip(" -•\t")
+    ]
 
 
 _compiled_graph = _build_graph()
-

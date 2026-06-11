@@ -7,6 +7,7 @@ public record RewriteSuggestionDTO(
         String status,
         String originalBullet,
         String suggestedBullet,
+        String rewrittenBullet,
         List<String> targetedSkills,
         List<String> evidenceSources,
         List<String> unsupportedClaims,
@@ -14,4 +15,3 @@ public record RewriteSuggestionDTO(
         Boolean needsUserConfirmation
 ) {
 }
-

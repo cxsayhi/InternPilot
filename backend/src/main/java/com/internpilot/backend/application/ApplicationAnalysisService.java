@@ -113,11 +113,16 @@ public class ApplicationAnalysisService {
     }
 
     private RewriteSuggestionDTO toPendingSuggestion(AgentRewriteSuggestionDTO suggestion) {
+        String rewrittenBullet = firstNonBlank(
+                suggestion.rewrittenBullet(),
+                suggestion.suggestedBullet()
+        );
         return new RewriteSuggestionDTO(
                 prefixedId("sug"),
                 SUGGESTION_PENDING_REVIEW,
                 suggestion.originalBullet(),
-                suggestion.suggestedBullet(),
+                rewrittenBullet,
+                rewrittenBullet,
                 listOrEmpty(suggestion.targetedSkills()),
                 listOrEmpty(suggestion.evidenceSources()),
                 listOrEmpty(suggestion.unsupportedClaims()),
@@ -136,5 +141,12 @@ public class ApplicationAnalysisService {
 
     private static Map<String, Integer> mapOrEmpty(Map<String, Integer> value) {
         return value == null ? Map.of() : value;
+    }
+
+    private static String firstNonBlank(String primary, String fallback) {
+        if (primary != null && !primary.isBlank()) {
+            return primary;
+        }
+        return fallback;
     }
 }

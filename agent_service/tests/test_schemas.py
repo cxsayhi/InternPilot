@@ -38,7 +38,7 @@ def test_analyze_application_response_accepts_structured_payload():
         rewriteSuggestions=[
             {
                 "originalBullet": "Built an online shopping platform.",
-                "suggestedBullet": "Built a Java backend for an online shopping platform.",
+                "rewrittenBullet": "Built a Java backend for an online shopping platform.",
                 "targetedSkills": ["Java"],
                 "evidenceSources": ["pasted_resume_text"],
                 "unsupportedClaims": [],
@@ -75,7 +75,7 @@ def test_rewrite_suggestion_rejects_confidence_above_1():
     with pytest.raises(ValidationError):
         RewriteSuggestion(
             originalBullet="Built an online shopping platform.",
-            suggestedBullet="Built a Java backend for an online shopping platform.",
+            rewrittenBullet="Built a Java backend for an online shopping platform.",
             confidence=1.1,
             needsUserConfirmation=False,
         )

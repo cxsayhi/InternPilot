@@ -10,7 +10,6 @@ from app.schemas.job import JobProfile
 from app.schemas.plan import LearningPlanItem
 from app.schemas.project import ProjectEvidence
 from app.schemas.resume import ResumeProfile
-from app.schemas.rewrite import RewriteSuggestion
 from app.schemas.run import (
     AgentMetadata,
     AnalyzeApplicationRequest,
@@ -24,6 +23,7 @@ from app.services.resume_extraction import (
     RESUME_EXTRACTION_PROMPT_VERSION,
     extract_resume_profile_from_text,
 )
+from app.services.resume_rewrite import generate_no_fabrication_rewrites
 from app.services.skill_matching import (
     calculate_skill_match,
     find_known_skills,
@@ -135,36 +135,13 @@ def compare_skills(state: ApplicationAgentState) -> ApplicationAgentState:
 
 def generate_resume_rewrites(state: ApplicationAgentState) -> ApplicationAgentState:
     resume_profile = state["resume_profile"]
-    bullets = resume_profile.evidence_bullets
-    matched_skills = [
-        item.skill
-        for item in state["match_result"].strongMatches
-    ]
-    original = bullets[0] if bullets else "Built a software project."
-
-    if matched_skills:
-        skill_text = ", ".join(matched_skills[:4])
-        suggested = f"{original.rstrip('.')} with emphasis on {skill_text} experience relevant to the target internship."
-        needs_confirmation = False
-    else:
-        suggested = f"{original.rstrip('.')} with clearer scope, technical responsibility, and measurable outcome."
-        needs_confirmation = True
-
-    suggestion = validate_structured_output(
-        RewriteSuggestion,
-        {
-            "originalBullet": original,
-            "suggestedBullet": suggested,
-            "targetedSkills": matched_skills[:4],
-            "evidenceSources": ["pasted_resume_text"],
-            "unsupportedClaims": [],
-            "confidence": 0.78 if matched_skills else 0.55,
-            "needsUserConfirmation": needs_confirmation,
-        },
+    rewrite_suggestions = generate_no_fabrication_rewrites(
+        resume_profile=resume_profile,
+        match_result=state["match_result"],
     )
 
     return {
-        "rewrite_suggestions": [suggestion],
+        "rewrite_suggestions": rewrite_suggestions,
     }
 
 
@@ -174,22 +151,19 @@ def generate_learning_plan(state: ApplicationAgentState) -> ApplicationAgentStat
         for item in state["match_result"].missingSkills
     ]
     focus_skills = missing or ["resume clarity", "project evidence", "interview explanation"]
-    plan: list[dict] = []
+    plan: list[LearningPlanItem] = []
 
     for day in range(1, 8):
         skill = focus_skills[(day - 1) % len(focus_skills)]
+        tasks, deliverable = _learning_plan_tasks(skill)
         plan_item = validate_structured_output(
             LearningPlanItem,
             {
                 "day": day,
                 "title": f"Improve {skill}",
-                "tasks": [
-                    f"Study one practical example of {skill}.",
-                    f"Apply {skill} to one resume or project detail.",
-                    "Write one short note explaining what changed and why.",
-                ],
+                "tasks": tasks,
                 "targetSkills": [skill],
-                "deliverable": f"One visible improvement related to {skill}.",
+                "deliverable": deliverable,
             },
         )
         plan.append(plan_item)
@@ -326,6 +300,27 @@ def _extract_skill_evidence(skills: list[str], bullets: list[str]) -> dict[str, 
         skill: [bullet for bullet in bullets if skill.lower() in bullet.lower()]
         for skill in skills
     }
+
+
+def _learning_plan_tasks(skill: str) -> tuple[list[str], str]:
+    if skill == "Docker":
+        return (
+            [
+                "Add a Dockerfile to the existing Spring Boot project.",
+                "Add docker-compose support for the app and database.",
+                "Document local container startup steps in the README.",
+            ],
+            "Dockerfile and docker-compose support for the existing Spring Boot project.",
+        )
+
+    return (
+        [
+            f"Study one practical example of {skill}.",
+            f"Apply {skill} to one resume or project detail.",
+            "Write one short note explaining what changed and why.",
+        ],
+        f"One visible improvement related to {skill}.",
+    )
 
 
 def _clean_lines(text: str) -> list[str]:

@@ -1,8 +1,10 @@
-package com.internpilot.backend.domain;
+package com.internpilot.backend.dto;
 
 import java.util.List;
 
-public record AgentRewriteSuggestion(
+public record RewriteSuggestionDTO(
+        String id,
+        String status,
         String originalBullet,
         String suggestedBullet,
         List<String> targetedSkills,

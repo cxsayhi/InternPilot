@@ -1,7 +1,7 @@
 package com.internpilot.backend.application;
 
-import com.internpilot.backend.domain.AnalyzeApplicationRequest;
-import com.internpilot.backend.domain.ApplicationAnalysisResponse;
+import com.internpilot.backend.dto.AnalyzeApplicationRequest;
+import com.internpilot.backend.dto.AnalyzeApplicationResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -20,11 +20,10 @@ public class ApplicationAnalysisController {
     }
 
     @PostMapping("/analyze")
-    public ResponseEntity<ApplicationAnalysisResponse> analyze(
+    public ResponseEntity<AnalyzeApplicationResponse> analyze(
             @Valid @RequestBody AnalyzeApplicationRequest request
     ) {
         String userId = "demo-user";
         return ResponseEntity.ok(analysisService.analyze(userId, request));
     }
 }
-

@@ -1,8 +1,8 @@
 package com.internpilot.backend.agent;
 
 import com.internpilot.backend.config.AgentServiceProperties;
-import com.internpilot.backend.domain.AgentApplicationAnalysisRequest;
-import com.internpilot.backend.domain.AgentApplicationAnalysisResponse;
+import com.internpilot.backend.dto.agent.AgentApplicationAnalysisRequest;
+import com.internpilot.backend.dto.agent.AgentApplicationAnalysisResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
@@ -23,4 +23,3 @@ public class AgentServiceClient {
                 .body(AgentApplicationAnalysisResponse.class);
     }
 }
-

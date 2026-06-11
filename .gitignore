@@ -15,6 +15,7 @@ agent_service/.ruff_cache/
 # Node / frontend
 frontend/node_modules/
 frontend/dist/
+frontend/.npm-cache/
 
 # Env files
 .env
@@ -26,4 +27,3 @@ frontend/.env
 # IDE
 .idea/
 .vscode/
-

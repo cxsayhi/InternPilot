@@ -30,9 +30,8 @@ For the MVP, the backend only needs to support this flow:
 7. Spring Boot saves the analysis result.
 8. Spring Boot saves resume rewrite suggestions as `PENDING_REVIEW`.
 9. Frontend displays match result, missing skills, rewrite suggestions, and a 7-day action plan.
-10. User can later approve, edit, or reject each rewrite suggestion.
 
-Do not build PDF upload, vector search, dashboard statistics, history Q&A, interview generation, GitHub README analysis, or multi-agent orchestration in the MVP.
+Do not build PDF upload, vector search, rewrite approval, approved resume versions, dashboard statistics, history Q&A, interview generation, GitHub README analysis, or multi-agent orchestration in the MVP.
 
 ## 3. Fixed Service Ownership
 
@@ -50,7 +49,6 @@ Vue3 Frontend
 - text input UI for resume and job description
 - submit action
 - result rendering
-- approval, edit, and reject UI for rewrite suggestions
 - application list/detail screens for saved analyses
 
 The frontend must never call the Python Agent Service directly.
@@ -64,7 +62,6 @@ The frontend must never call the Python Agent Service directly.
 - application status
 - application analysis records
 - rewrite suggestion review status
-- approved resume content
 - audit fields
 
 Spring Boot is the only service allowed to persist product data in MySQL.
@@ -103,7 +100,6 @@ The application analysis call chain is fixed:
 4. Spring Boot
    - saves application_analysis
    - saves rewrite suggestions as PENDING_REVIEW
-   - saves skill_gap_events if present
    - updates application status to ANALYZED
 
 5. Vue3
@@ -124,13 +120,13 @@ POST /internal/agent/application-analysis
 
 The frontend must not depend on Agent Service response shape. It depends on the Spring Boot response shape only.
 
-## 5. Fixed Rewrite Approval Call Chain
+## 5. Rewrite Approval Is Post-MVP
 
-Saving analysis and saving approved resume content are separate flows.
+Saving analysis and saving approved resume content must remain separate flows.
 
 Analysis flow saves AI analysis and pending suggestions. It does not save approved resume content.
 
-Approval flow is fixed:
+The approval flow is not part of the current MVP. When V1 adds it, the call chain must be:
 
 ```text
 1. Vue3
@@ -169,22 +165,23 @@ Use MySQL as the source of truth for MVP product data.
 Minimum MVP tables:
 
 - `users`
+- `resumes`
+- `projects`
 - `applications`
 - `application_analysis`
 - `resume_rewrite_suggestions`
-- `approved_resume_contents`
-- `skill_gap_events`
 
-Optional post-MVP tables:
+Optional V1 tables:
 
-- `resumes`
-- `resume_versions`
-- `projects`
-- `application_notes`
 - `agent_run_audit`
+- `approved_resume_versions`
+- `dashboard_statistics`
+- `history_query`
+- `skill_gap_events`
 
 Minimum application statuses:
 
+- `DRAFT`
 - `ANALYZING`
 - `ANALYZED`
 - `FAILED`
@@ -194,11 +191,10 @@ Minimum application statuses:
 Minimum rewrite suggestion statuses:
 
 - `PENDING_REVIEW`
-- `APPROVED`
-- `EDITED_AND_APPROVED`
 - `REJECTED`
+- `ACCEPTED`
 
-## 7. Analysis Vs Approved Content Rule
+## 7. Analysis Vs Rewrite Suggestion Rule
 
 These two concepts must never be mixed.
 
@@ -243,16 +239,9 @@ Required fields:
 
 Suggestions start as `PENDING_REVIEW`.
 
-### `approved_resume_contents`
+### Approved resume versions
 
-Stores user-approved resume content only.
-
-Rows may be created only when:
-
-- user chooses `APPROVE`
-- user chooses `EDIT_AND_APPROVE`
-
-Rows must not be created during `/api/applications/analyze`.
+Approved resume versions are V1, not MVP. Rows for approved resume content must not be created during `/api/applications/analyze`.
 
 ## 8. Spring Boot API Contract
 
@@ -274,12 +263,13 @@ Response:
   "applicationId": "app_123",
   "analysisId": "analysis_123",
   "status": "ANALYZED",
-  "matchScore": 78,
-  "scoreBreakdown": {},
-  "strongMatches": [],
-  "weakMatches": [],
-  "missingSkills": [],
-  "learningPlan": [],
+  "matchResult": {
+    "score": 78,
+    "scoreBreakdown": {},
+    "strongMatches": [],
+    "weakMatches": [],
+    "missingSkills": []
+  },
   "rewriteSuggestions": [
     {
       "id": "sug_123",
@@ -289,31 +279,16 @@ Response:
       "targetedSkills": ["Spring Boot", "REST API", "MySQL"],
       "evidenceSources": ["resume.project.online_shop"],
       "unsupportedClaims": [],
-      "confidence": 0.86
+      "confidence": 0.86,
+      "needsUserConfirmation": false
     }
   ],
+  "learningPlan": [],
   "warnings": []
 }
 ```
 
-`PATCH /api/resume-rewrite-suggestions/{suggestionId}/review` request:
-
-```json
-{
-  "decision": "EDIT_AND_APPROVE",
-  "editedBullet": "Developed Spring Boot REST APIs for product listing, cart management, and MySQL persistence."
-}
-```
-
-Response:
-
-```json
-{
-  "suggestionId": "sug_123",
-  "status": "EDITED_AND_APPROVED",
-  "approvedContentId": "approved_123"
-}
-```
+The rewrite review endpoint is V1 and must not be implemented during the MVP database/DTO phase.
 
 ## 9. Agent Service Contract From Spring Boot
 
@@ -371,7 +346,6 @@ MVP includes only:
 - produce rewrite suggestions as `PENDING_REVIEW`
 - produce a 7-day action plan
 - save analysis history
-- approve, edit-and-approve, or reject rewrite suggestions
 
 MVP excludes:
 
@@ -380,6 +354,9 @@ MVP excludes:
 - project retrieval
 - application dashboard statistics
 - history Q&A
+- rewrite approval flow
+- approved resume versions
+- skill gap event aggregation
 - weekly planning automation
 - interview question generator
 - GitHub README analyzer
@@ -399,7 +376,7 @@ Backend requirements:
 - Validate request size for resume and job text.
 - Store API keys only in environment variables.
 - Add rate limits for LLM-heavy endpoints.
-- Reject approval requests for suggestions not owned by the authenticated user.
+- When V1 adds rewrite review, reject approval requests for suggestions not owned by the authenticated user.
 
 ## 12. Failure Handling Rule
 
@@ -409,7 +386,6 @@ If Agent Service fails:
 2. Spring Boot stores a sanitized error code and message.
 3. Spring Boot returns a controlled error response to the frontend.
 4. Spring Boot does not create rewrite suggestions.
-5. Spring Boot does not create approved resume content.
 
 Required error response:
 
@@ -430,11 +406,7 @@ Required MVP backend tests:
 - Spring Boot calls Agent Service with the fixed internal contract.
 - successful analysis saves `application_analysis`.
 - successful analysis saves suggestions as `PENDING_REVIEW`.
-- successful analysis does not create `approved_resume_contents`.
-- `APPROVE` creates `approved_resume_contents`.
-- `EDIT_AND_APPROVE` creates `approved_resume_contents` using edited text.
-- `REJECT` does not create `approved_resume_contents`.
-- user cannot review another user's suggestion.
+- successful analysis does not create approved resume versions.
 - Agent Service failure marks application as `FAILED`.
 
 ## 14. Definition Of Done
@@ -444,8 +416,8 @@ A backend feature is done only when:
 - it follows the fixed Vue3 -> Spring Boot -> Agent Service call chain
 - public APIs are owned by Spring Boot
 - product persistence is owned by Spring Boot
-- application analysis storage is separate from approved resume content storage
+- application analysis storage is separate from rewrite suggestion storage
 - rewrite suggestions start as `PENDING_REVIEW`
-- approved resume content is created only by explicit user approval
+- approved resume versions are not implemented in MVP
 - MVP exclusions are not accidentally implemented early
 - tests cover the persistence distinction

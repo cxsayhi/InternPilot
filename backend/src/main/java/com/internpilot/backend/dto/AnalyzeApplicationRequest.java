@@ -1,4 +1,4 @@
-package com.internpilot.backend.domain;
+package com.internpilot.backend.dto;
 
 import jakarta.validation.constraints.NotBlank;
 

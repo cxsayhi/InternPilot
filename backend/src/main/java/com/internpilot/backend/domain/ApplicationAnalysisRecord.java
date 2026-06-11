@@ -1,5 +1,6 @@
 package com.internpilot.backend.domain;
 
+import com.internpilot.backend.dto.AnalyzeApplicationResponse;
 import java.time.Instant;
 
 public record ApplicationAnalysisRecord(
@@ -7,9 +8,8 @@ public record ApplicationAnalysisRecord(
         String analysisId,
         String userId,
         String status,
-        ApplicationAnalysisResponse response,
+        AnalyzeApplicationResponse response,
         String failureCode,
         Instant createdAt
 ) {
 }
-

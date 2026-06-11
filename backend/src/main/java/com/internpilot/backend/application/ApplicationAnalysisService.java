@@ -1,13 +1,14 @@
 package com.internpilot.backend.application;
 
 import com.internpilot.backend.agent.AgentServiceClient;
-import com.internpilot.backend.domain.AgentApplicationAnalysisRequest;
-import com.internpilot.backend.domain.AgentApplicationAnalysisResponse;
-import com.internpilot.backend.domain.AgentRewriteSuggestion;
-import com.internpilot.backend.domain.AnalyzeApplicationRequest;
 import com.internpilot.backend.domain.ApplicationAnalysisRecord;
-import com.internpilot.backend.domain.ApplicationAnalysisResponse;
-import com.internpilot.backend.domain.RewriteSuggestionView;
+import com.internpilot.backend.dto.AnalyzeApplicationRequest;
+import com.internpilot.backend.dto.AnalyzeApplicationResponse;
+import com.internpilot.backend.dto.MatchResultDTO;
+import com.internpilot.backend.dto.RewriteSuggestionDTO;
+import com.internpilot.backend.dto.agent.AgentApplicationAnalysisRequest;
+import com.internpilot.backend.dto.agent.AgentApplicationAnalysisResponse;
+import com.internpilot.backend.dto.agent.AgentRewriteSuggestionDTO;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -35,7 +36,7 @@ public class ApplicationAnalysisService {
         this.store = store;
     }
 
-    public ApplicationAnalysisResponse analyze(String userId, AnalyzeApplicationRequest request) {
+    public AnalyzeApplicationResponse analyze(String userId, AnalyzeApplicationRequest request) {
         String applicationId = prefixedId("app");
         String analysisId = prefixedId("analysis");
 
@@ -68,22 +69,33 @@ public class ApplicationAnalysisService {
             );
         }
 
-        List<RewriteSuggestionView> suggestions = listOrEmpty(agentResponse.rewriteSuggestions())
-                .stream()
-                .map(this::toPendingSuggestion)
-                .toList();
+        if (agentResponse == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_GATEWAY,
+                    "Application analysis failed. Please try again later."
+            );
+        }
 
-        ApplicationAnalysisResponse response = new ApplicationAnalysisResponse(
-                applicationId,
-                analysisId,
-                STATUS_ANALYZED,
+        MatchResultDTO matchResult = new MatchResultDTO(
                 agentResponse.matchScore(),
                 mapOrEmpty(agentResponse.scoreBreakdown()),
                 listOrEmpty(agentResponse.strongMatches()),
                 listOrEmpty(agentResponse.weakMatches()),
-                listOrEmpty(agentResponse.missingSkills()),
-                listOrEmpty(agentResponse.learningPlan()),
+                listOrEmpty(agentResponse.missingSkills())
+        );
+
+        List<RewriteSuggestionDTO> suggestions = listOrEmpty(agentResponse.rewriteSuggestions())
+                .stream()
+                .map(this::toPendingSuggestion)
+                .toList();
+
+        AnalyzeApplicationResponse response = new AnalyzeApplicationResponse(
+                applicationId,
+                analysisId,
+                STATUS_ANALYZED,
+                matchResult,
                 suggestions,
+                listOrEmpty(agentResponse.learningPlan()),
                 listOrEmpty(agentResponse.warnings())
         );
 
@@ -100,8 +112,8 @@ public class ApplicationAnalysisService {
         return response;
     }
 
-    private RewriteSuggestionView toPendingSuggestion(AgentRewriteSuggestion suggestion) {
-        return new RewriteSuggestionView(
+    private RewriteSuggestionDTO toPendingSuggestion(AgentRewriteSuggestionDTO suggestion) {
+        return new RewriteSuggestionDTO(
                 prefixedId("sug"),
                 SUGGESTION_PENDING_REVIEW,
                 suggestion.originalBullet(),
@@ -109,7 +121,8 @@ public class ApplicationAnalysisService {
                 listOrEmpty(suggestion.targetedSkills()),
                 listOrEmpty(suggestion.evidenceSources()),
                 listOrEmpty(suggestion.unsupportedClaims()),
-                suggestion.confidence()
+                suggestion.confidence(),
+                suggestion.needsUserConfirmation()
         );
     }
 
@@ -121,8 +134,7 @@ public class ApplicationAnalysisService {
         return value == null ? List.of() : value;
     }
 
-    private static Map<String, Object> mapOrEmpty(Map<String, Object> value) {
+    private static Map<String, Integer> mapOrEmpty(Map<String, Integer> value) {
         return value == null ? Map.of() : value;
     }
 }
-

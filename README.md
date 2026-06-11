@@ -46,6 +46,43 @@ Phase 1 creates the project skeleton only:
 
 The current backend stores analysis records in memory as a temporary Phase 1 placeholder. MySQL persistence will be implemented in a later phase.
 
+## Database Schema
+
+The MVP MySQL schema lives at:
+
+```text
+backend/src/main/resources/db/migration/V1__create_mvp_schema.sql
+```
+
+It defines only the Phase 2 minimum tables:
+
+- `users`
+- `resumes`
+- `projects`
+- `applications`
+- `application_analysis`
+- `resume_rewrite_suggestions`
+
+## Phase 3 Business APIs
+
+Phase 3 adds ordinary Spring Boot business APIs without LLM calls:
+
+```http
+POST /api/resumes
+GET  /api/resumes/{id}
+
+POST /api/projects
+GET  /api/projects
+
+POST /api/applications
+GET  /api/applications
+GET  /api/applications/{id}
+```
+
+During MVP development, requests use the `X-User-Id` header for user isolation. If the header is missing, the backend uses `demo-user`.
+
+All resource reads are scoped by `user_id`; the backend must never read resumes, projects, or applications by ID alone.
+
 ## Local Development
 
 Backend:
@@ -84,4 +121,3 @@ Default local ports:
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8080`
 - Agent Service: `http://localhost:8000`
-

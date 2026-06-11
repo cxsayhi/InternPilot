@@ -44,14 +44,14 @@
 
       <template v-else>
         <div class="score-block">
-          <span class="score">{{ result.matchScore }}</span>
+          <span class="score">{{ result.matchResult.score }}</span>
           <span class="score-label">match score</span>
         </div>
 
         <div class="result-grid">
-          <ResultList title="Strong matches" :items="result.strongMatches" />
-          <ResultList title="Weak matches" :items="result.weakMatches" />
-          <ResultList title="Missing skills" :items="result.missingSkills" />
+          <ResultList title="Strong matches" :items="result.matchResult.strongMatches" />
+          <ResultList title="Weak matches" :items="result.matchResult.weakMatches" />
+          <ResultList title="Missing skills" :items="result.matchResult.missingSkills" />
         </div>
 
         <section class="section-block">
@@ -118,4 +118,3 @@ async function submitAnalysis() {
   }
 }
 </script>
-

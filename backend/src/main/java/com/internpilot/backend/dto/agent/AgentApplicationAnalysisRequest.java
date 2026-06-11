@@ -1,4 +1,4 @@
-package com.internpilot.backend.domain;
+package com.internpilot.backend.dto.agent;
 
 public record AgentApplicationAnalysisRequest(
         String userId,

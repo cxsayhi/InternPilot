@@ -64,7 +64,7 @@
             <p class="muted">Original</p>
             <p>{{ suggestion.originalBullet }}</p>
             <p class="muted">Suggested</p>
-            <p>{{ suggestion.suggestedBullet }}</p>
+            <p>{{ suggestion.rewrittenBullet || suggestion.suggestedBullet }}</p>
             <span class="status">{{ suggestion.status }}</span>
           </article>
         </section>

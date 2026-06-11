@@ -1,8 +1,10 @@
 from app.graphs.application_graph import run_application_graph
 from app.graphs import application_graph
 from app.schemas.job import JobProfile
+from app.schemas.resume import ResumeProfile
 from app.schemas.run import AnalyzeApplicationRequest
 from app.services.job_extraction import JOB_EXTRACTION_PROMPT_VERSION
+from app.services.resume_extraction import RESUME_EXTRACTION_PROMPT_VERSION
 
 
 def test_application_graph_returns_core_analysis():
@@ -22,6 +24,9 @@ def test_application_graph_returns_core_analysis():
     assert response.missingSkills
     assert "projectEvidenceStrength" in response.scoreBreakdown
     assert response.rewriteSuggestions
+    assert response.rewriteSuggestions[0].rewrittenBullet
+    assert response.rewriteSuggestions[0].unsupportedClaims == []
+    assert response.rewriteSuggestions[0].needsUserConfirmation is True
     assert len(response.learningPlan) == 7
 
 
@@ -53,3 +58,61 @@ def test_application_graph_uses_llm_job_extraction_when_enabled(monkeypatch):
     assert response.metadata.promptVersions["jobExtraction"] == JOB_EXTRACTION_PROMPT_VERSION
     assert {match.skill for match in response.strongMatches} == {"Java", "Spring Boot"}
     assert {match.skill for match in response.missingSkills} == {"RAG"}
+
+
+def test_application_graph_uses_llm_resume_extraction_when_enabled(monkeypatch):
+    monkeypatch.setattr(application_graph.settings, "resume_extraction_mode", "llm")
+    monkeypatch.setattr(
+        application_graph,
+        "extract_resume_profile_from_text",
+        lambda _resume_text: ResumeProfile(
+            skills=["Java", "Spring Boot"],
+            skill_evidence={
+                "Java": ["Built a Java backend with Spring Boot."],
+                "Spring Boot": ["Built a Java backend with Spring Boot."],
+            },
+            projects=[
+                {
+                    "name": "Backend Project",
+                    "tech_stack": ["Java", "Spring Boot"],
+                    "evidence_text": "Built a Java backend with Spring Boot.",
+                }
+            ],
+            evidence_bullets=["Built a Java backend with Spring Boot."],
+            weak_points=["No RAG project evidence."],
+        ),
+    )
+
+    request = AnalyzeApplicationRequest(
+        userId="user_1",
+        applicationId="app_1",
+        resumeText="This text is parsed by the mocked LLM extractor.",
+        jobText="Java Backend Intern requirements: Java, Spring Boot, RAG.",
+    )
+
+    response = run_application_graph(request)
+
+    assert response.metadata.promptVersions["resumeExtraction"] == RESUME_EXTRACTION_PROMPT_VERSION
+    assert {match.skill for match in response.strongMatches} == {"Java", "Spring Boot"}
+    assert {match.skill for match in response.missingSkills} == {"RAG"}
+
+
+def test_application_graph_does_not_rewrite_missing_docker_as_experience():
+    request = AnalyzeApplicationRequest(
+        userId="user_1",
+        applicationId="app_1",
+        resumeText="Built a Java backend with Spring Boot and MySQL.",
+        jobText="Java Backend Intern requirements: Java, Spring Boot, MySQL, Docker.",
+    )
+
+    response = run_application_graph(request)
+
+    assert {match.skill for match in response.missingSkills} == {"Docker"}
+    assert all("Docker" not in suggestion.rewrittenBullet for suggestion in response.rewriteSuggestions)
+    docker_items = [
+        item
+        for item in response.learningPlan
+        if "Docker" in item.targetSkills
+    ]
+    assert docker_items
+    assert "Dockerfile" in docker_items[0].deliverable

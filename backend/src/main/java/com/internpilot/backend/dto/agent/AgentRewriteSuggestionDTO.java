@@ -5,6 +5,7 @@ import java.util.List;
 public record AgentRewriteSuggestionDTO(
         String originalBullet,
         String suggestedBullet,
+        String rewrittenBullet,
         List<String> targetedSkills,
         List<String> evidenceSources,
         List<String> unsupportedClaims,
@@ -12,4 +13,3 @@ public record AgentRewriteSuggestionDTO(
         Boolean needsUserConfirmation
 ) {
 }
-

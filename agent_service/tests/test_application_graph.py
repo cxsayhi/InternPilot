@@ -1,8 +1,10 @@
 from app.graphs.application_graph import run_application_graph
 from app.graphs import application_graph
 from app.schemas.job import JobProfile
+from app.schemas.resume import ResumeProfile
 from app.schemas.run import AnalyzeApplicationRequest
 from app.services.job_extraction import JOB_EXTRACTION_PROMPT_VERSION
+from app.services.resume_extraction import RESUME_EXTRACTION_PROMPT_VERSION
 
 
 def test_application_graph_returns_core_analysis():
@@ -51,5 +53,42 @@ def test_application_graph_uses_llm_job_extraction_when_enabled(monkeypatch):
     response = run_application_graph(request)
 
     assert response.metadata.promptVersions["jobExtraction"] == JOB_EXTRACTION_PROMPT_VERSION
+    assert {match.skill for match in response.strongMatches} == {"Java", "Spring Boot"}
+    assert {match.skill for match in response.missingSkills} == {"RAG"}
+
+
+def test_application_graph_uses_llm_resume_extraction_when_enabled(monkeypatch):
+    monkeypatch.setattr(application_graph.settings, "resume_extraction_mode", "llm")
+    monkeypatch.setattr(
+        application_graph,
+        "extract_resume_profile_from_text",
+        lambda _resume_text: ResumeProfile(
+            skills=["Java", "Spring Boot"],
+            skill_evidence={
+                "Java": ["Built a Java backend with Spring Boot."],
+                "Spring Boot": ["Built a Java backend with Spring Boot."],
+            },
+            projects=[
+                {
+                    "name": "Backend Project",
+                    "tech_stack": ["Java", "Spring Boot"],
+                    "evidence_text": "Built a Java backend with Spring Boot.",
+                }
+            ],
+            evidence_bullets=["Built a Java backend with Spring Boot."],
+            weak_points=["No RAG project evidence."],
+        ),
+    )
+
+    request = AnalyzeApplicationRequest(
+        userId="user_1",
+        applicationId="app_1",
+        resumeText="This text is parsed by the mocked LLM extractor.",
+        jobText="Java Backend Intern requirements: Java, Spring Boot, RAG.",
+    )
+
+    response = run_application_graph(request)
+
+    assert response.metadata.promptVersions["resumeExtraction"] == RESUME_EXTRACTION_PROMPT_VERSION
     assert {match.skill for match in response.strongMatches} == {"Java", "Spring Boot"}
     assert {match.skill for match in response.missingSkills} == {"RAG"}

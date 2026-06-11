@@ -21,6 +21,10 @@ from app.services.job_extraction import (
     JOB_EXTRACTION_PROMPT_VERSION,
     extract_job_profile,
 )
+from app.services.resume_extraction import (
+    RESUME_EXTRACTION_PROMPT_VERSION,
+    extract_resume_profile_from_text,
+)
 from app.services.skill_matching import (
     calculate_skill_match,
     find_known_skills,
@@ -63,7 +67,7 @@ def run_application_graph(request: AnalyzeApplicationRequest) -> AnalyzeApplicat
                 model=settings.model_name,
                 promptVersions={
                     "jobExtraction": _job_extraction_prompt_version(),
-                    "resumeExtraction": "deterministic_mvp.v1",
+                    "resumeExtraction": _resume_extraction_prompt_version(),
                     "rewrite": "deterministic_mvp.v1",
                     "learningPlan": "deterministic_mvp.v1",
                 },
@@ -119,6 +123,14 @@ def extract_job_requirements(state: ApplicationAgentState) -> ApplicationAgentSt
 
 def extract_resume_profile(state: ApplicationAgentState) -> ApplicationAgentState:
     resume_text = state["resume_text"]
+
+    if settings.resume_extraction_mode == "llm":
+        resume_profile = extract_resume_profile_from_text(resume_text)
+        return {
+            "resume_profile": resume_profile.model_dump(),
+            "next_action": "match",
+        }
+
     skills = _find_skills(resume_text)
     bullets = _extract_resume_bullets(resume_text)
     projects = _extract_project_evidence(bullets)
@@ -126,8 +138,9 @@ def extract_resume_profile(state: ApplicationAgentState) -> ApplicationAgentStat
         ResumeProfile,
         {
             "skills": skills,
-            "bullets": bullets,
+            "evidence_bullets": bullets,
             "projects": projects,
+            "skill_evidence": _extract_skill_evidence(skills, bullets),
         },
     )
     return {
@@ -156,7 +169,8 @@ def compare_skills(state: ApplicationAgentState) -> ApplicationAgentState:
 
 
 def generate_resume_rewrites(state: ApplicationAgentState) -> ApplicationAgentState:
-    bullets = state["resume_profile"].get("bullets", [])
+    resume_profile = validate_structured_output(ResumeProfile, state["resume_profile"])
+    bullets = resume_profile.evidence_bullets
     matched_skills = [
         item["skill"]
         for item in state["match_result"].get("strongMatches", [])
@@ -258,6 +272,12 @@ def _job_extraction_prompt_version() -> str:
     return "deterministic_mvp.v1"
 
 
+def _resume_extraction_prompt_version() -> str:
+    if settings.resume_extraction_mode == "llm":
+        return RESUME_EXTRACTION_PROMPT_VERSION
+    return "deterministic_mvp.v1"
+
+
 def _split_required_and_preferred_skills(text: str) -> tuple[list[str], list[str]]:
     required: list[str] = []
     preferred: list[str] = []
@@ -304,13 +324,20 @@ def _extract_project_evidence(bullets: list[str]) -> list[dict]:
             ProjectEvidence,
             {
                 "name": f"Resume bullet {index}",
-                "techStack": tech_stack,
-                "evidenceText": bullet,
+                "tech_stack": tech_stack,
+                "evidence_text": bullet,
                 "source": "pasted_resume_text",
             },
         )
         projects.append(project.model_dump())
     return projects
+
+
+def _extract_skill_evidence(skills: list[str], bullets: list[str]) -> dict[str, list[str]]:
+    return {
+        skill: [bullet for bullet in bullets if skill.lower() in bullet.lower()]
+        for skill in skills
+    }
 
 
 def _clean_lines(text: str) -> list[str]:
